@@ -10,12 +10,16 @@ android {
     buildToolsVersion = "36.0.0"
     ndkVersion = "27.2.12479018"
 
+    // Transcribro Compact: different applicationId so it installs alongside the official app.
+    // (namespace above stays the same so the code's package names don't need to change.)
     defaultConfig {
-        applicationId = "dev.soupslurpr.transcribro"
+        applicationId = "dev.arhamgwork.transcribro"
         minSdk = 29
         targetSdk = 36
-        versionCode = 7
-        versionName = versionCode.toString()
+        // The GitHub Actions build passes its run number so every build is a newer version.
+        val compactBuildNumber = (findProperty("compactBuildNumber") as String?)?.toIntOrNull() ?: 0
+        versionCode = 7000 + compactBuildNumber
+        versionName = "7-compact-$compactBuildNumber"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -47,6 +51,22 @@ android {
         generateLocaleConfig = true
         localeFilters += listOf("en")
     }
+    // Signing for the GitHub Actions build. The workflow sets COMPACT_KEYSTORE_FILE and
+    // COMPACT_KEYSTORE_PASSWORD; without them, release builds fall back to the debug key.
+    val compactKeystoreFile = System.getenv("COMPACT_KEYSTORE_FILE")
+    val compactKeystorePassword = System.getenv("COMPACT_KEYSTORE_PASSWORD")
+    val hasCompactKeystore = !compactKeystoreFile.isNullOrBlank() && !compactKeystorePassword.isNullOrBlank()
+    signingConfigs {
+        if (hasCompactKeystore) {
+            create("compact") {
+                storeFile = file(compactKeystoreFile!!)
+                storePassword = compactKeystorePassword
+                keyAlias = "compact"
+                keyPassword = compactKeystorePassword
+                storeType = "pkcs12"
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -55,6 +75,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = if (hasCompactKeystore) {
+                signingConfigs.getByName("compact")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         getByName("debug") {
             applicationIdSuffix = ".debug"
