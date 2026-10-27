@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -192,12 +193,18 @@ class VoiceInput : InputMethodService() {
             val useTwoRows = isPortrait &&
                     LocalConfiguration.current.screenWidthDp < CompactKeyboardSize.twoRowMaxScreenWidthDp
 
+            // Tablets (shortest side 600dp or more) get slightly bigger buttons.
+            val isTablet = LocalConfiguration.current.smallestScreenWidthDp >= CompactKeyboardSize.twoRowMaxScreenWidthDp
+            val maxStripWidth = if (isTablet) CompactKeyboardSize.tabletMaxStripWidth else CompactKeyboardSize.maxStripWidth
+
             // Messages (accept privacy policy / grant microphone) need more room than the button strip.
             val panelHeight = when {
                 !acceptedPrivacyPolicyAndLicense || showInsufficientPermissionsError ->
                     CompactKeyboardSize.messagePanelHeight
 
                 useTwoRows -> CompactKeyboardSize.twoRowStripHeight
+                isTablet && isPortrait -> CompactKeyboardSize.tabletStripHeightPortrait
+                isTablet -> CompactKeyboardSize.tabletStripHeightLandscape
                 isPortrait -> CompactKeyboardSize.stripHeightPortrait
                 else -> CompactKeyboardSize.stripHeightLandscape
             }
@@ -211,7 +218,8 @@ class VoiceInput : InputMethodService() {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .windowInsetsPadding(WindowInsets.navigationBars)
+                            // Keep clear of Android's navigation area and its "hide / switch keyboard" buttons.
+                            .windowInsetsPadding(WindowInsets.navigationBars union WindowInsets(bottom = CompactKeyboardSize.minBottomSpace))
                     ) {
                         Box(
                             modifier = Modifier
@@ -766,7 +774,7 @@ class VoiceInput : InputMethodService() {
                                         Row(
                                             modifier = Modifier
                                                 .align(Alignment.Center)
-                                                .widthIn(max = CompactKeyboardSize.maxStripWidth)
+                                                .widthIn(max = maxStripWidth)
                                                 .fillMaxWidth()
                                                 .fillMaxHeight(),
                                             verticalAlignment = Alignment.CenterVertically,
@@ -907,6 +915,18 @@ private object CompactKeyboardSize {
     /** Upright screens narrower than this (in dp) use two rows. Phones are under 600, tablets 600+. */
     const val twoRowMaxScreenWidthDp: Int = 600
 
+    /** Tablet strip height when upright (portrait). */
+    val tabletStripHeightPortrait: Dp = 60.dp
+
+    /** Tablet strip height when sideways (landscape). */
+    val tabletStripHeightLandscape: Dp = 52.dp
+
+    /**
+     * Minimum empty space kept under the buttons, so they don't cover Android's own
+     * "hide keyboard" and "switch keyboard" buttons that it draws at the bottom of the screen.
+     */
+    val minBottomSpace: Dp = 48.dp
+
     /** Height used only when the keyboard has to show a message (accept policy / grant microphone). */
     val messagePanelHeight: Dp = 200.dp
 
@@ -918,6 +938,9 @@ private object CompactKeyboardSize {
 
     /** On wide screens the strip stops growing past this width and stays centered. */
     val maxStripWidth: Dp = 720.dp
+
+    /** The same limit on tablets (a little wider, so tablet buttons are bigger). */
+    val tabletMaxStripWidth: Dp = 780.dp
 
     /** How many times wider the mic button is than the other buttons. */
     const val micButtonWeight: Float = 2.5f
