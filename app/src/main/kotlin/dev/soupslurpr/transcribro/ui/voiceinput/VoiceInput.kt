@@ -219,7 +219,7 @@ class VoiceInput : InputMethodService() {
                         modifier = Modifier
                             .fillMaxWidth()
                             // Keep clear of Android's navigation area and its "hide / switch keyboard" buttons.
-                            .windowInsetsPadding(WindowInsets.navigationBars union WindowInsets(bottom = CompactKeyboardSize.minBottomSpace))
+                            .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets(bottom = CompactKeyboardSize.minBottomSpace)))
                     ) {
                         Box(
                             modifier = Modifier
