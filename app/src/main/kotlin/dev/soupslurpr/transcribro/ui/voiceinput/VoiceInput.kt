@@ -32,7 +32,9 @@ import android.view.inputmethod.InputConnection
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -72,6 +74,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -185,11 +188,16 @@ class VoiceInput : InputMethodService() {
 
             val isPortrait = LocalConfiguration.current.orientation == ORIENTATION_PORTRAIT
 
+            // Phones held upright are too narrow for one row of buttons, so they get two rows.
+            val useTwoRows = isPortrait &&
+                    LocalConfiguration.current.screenWidthDp < CompactKeyboardSize.twoRowMaxScreenWidthDp
+
             // Messages (accept privacy policy / grant microphone) need more room than the button strip.
             val panelHeight = when {
                 !acceptedPrivacyPolicyAndLicense || showInsufficientPermissionsError ->
                     CompactKeyboardSize.messagePanelHeight
 
+                useTwoRows -> CompactKeyboardSize.twoRowStripHeight
                 isPortrait -> CompactKeyboardSize.stripHeightPortrait
                 else -> CompactKeyboardSize.stripHeightLandscape
             }
@@ -471,15 +479,8 @@ class VoiceInput : InputMethodService() {
                                     // so the strip heights in CompactKeyboardSize are respected.
                                     LocalMinimumInteractiveComponentSize provides 0.dp
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .align(Alignment.Center)
-                                            .widthIn(max = CompactKeyboardSize.maxStripWidth)
-                                            .fillMaxWidth()
-                                            .fillMaxHeight(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
-                                    ) {
+                                    // Settings, switch keyboard, cancel and mic (first row on phones held upright)
+                                    val firstRowButtons: @Composable RowScope.() -> Unit = {
                                         val buttonModifier = Modifier
                                             .weight(1f)
                                             .fillMaxHeight()
@@ -570,6 +571,13 @@ class VoiceInput : InputMethodService() {
                                                 modifier = Modifier.size(CompactKeyboardSize.micIconSize)
                                             )
                                         }
+                                    }
+
+                                    // Editing buttons (second row on phones held upright)
+                                    val secondRowButtons: @Composable RowScope.() -> Unit = {
+                                        val buttonModifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
 
                                         // Clear all text that isn't selected
                                         FilledTonalIconButton(
@@ -726,6 +734,48 @@ class VoiceInput : InputMethodService() {
                                             )
                                         }
                                     }
+
+                                    if (useTwoRows) {
+                                        // Phone held upright: two rows of bigger buttons.
+                                        Column(
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .fillMaxWidth()
+                                                .fillMaxHeight(),
+                                            verticalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .weight(1f),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing),
+                                                content = firstRowButtons
+                                            )
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .weight(1f),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing),
+                                                content = secondRowButtons
+                                            )
+                                        }
+                                    } else {
+                                        // Tablet, or phone held sideways: one thin row.
+                                        Row(
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .widthIn(max = CompactKeyboardSize.maxStripWidth)
+                                                .fillMaxWidth()
+                                                .fillMaxHeight(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
+                                        ) {
+                                            firstRowButtons()
+                                            secondRowButtons()
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -847,6 +897,15 @@ private object CompactKeyboardSize {
 
     /** Height of the button strip when the device is sideways (landscape). */
     val stripHeightLandscape: Dp = 48.dp
+
+    /**
+     * Phones held upright are too narrow for one row, so they get two rows of bigger buttons.
+     * This is the total height of both rows together.
+     */
+    val twoRowStripHeight: Dp = 120.dp
+
+    /** Upright screens narrower than this (in dp) use two rows. Phones are under 600, tablets 600+. */
+    const val twoRowMaxScreenWidthDp: Int = 600
 
     /** Height used only when the keyboard has to show a message (accept policy / grant microphone). */
     val messagePanelHeight: Dp = 200.dp
