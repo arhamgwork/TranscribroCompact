@@ -184,11 +184,13 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
     params.suppress_nst = true;
     // Transcribro Compact: hint words, so Whisper recognizes and spells common
     // Islamic greetings and Urdu words this way (written in English letters).
-    params.initial_prompt = "Assalamu alaikum, Walaikum assalam. Alhamdulillah, InshaAllah, "
-                            "MashaAllah, SubhanAllah, Bismillah, JazakAllah Khair, Allahu Akbar, "
-                            "Astaghfirullah, Ameen. Allah Hafiz, Khuda Hafiz. Eid Mubarak, "
-                            "Ramadan Mubarak, Ramzan Mubarak, Jumma Mubarak. Shukriya, theek hai, "
-                            "acha, yaar, bilkul, chalo.";
+    params.initial_prompt = "Assalamualaikum wa rahmatullahi wa barakatuh. Walaikumassalam. "
+                            "Alhamdulillah, InshaAllah, MashaAllah, SubhanAllah, Bismillah, "
+                            "JazakAllah Khair, Barakallahu feek, Allahu Akbar, Astaghfirullah, Ameen. "
+                            "La ilaha illallah. Inna lillahi wa inna ilayhi raji'un. "
+                            "Sallallahu alaihi wasallam. Allah Hafiz, Khuda Hafiz. "
+                            "Eid Mubarak, Ramadan Mubarak, Ramzan Mubarak, Jumma Mubarak. "
+                            "Shukriya, theek hai, acha, yaar, bilkul, chalo.";
 
     whisper_reset_timings(context);
 
