@@ -34,7 +34,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
+import android.graphics.Rect
+import android.inputmethodservice.InputMethodService.Insets
+import android.view.Surface as AndroidSurface
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,7 +69,7 @@ import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -129,6 +142,49 @@ private var isSpeaking by mutableStateOf(false)
 class VoiceInput : InputMethodService() {
     private val voiceInputLifecycleOwner = VoiceInputLifecycleOwner()
 
+    // Remembers which side the landscape side keyboard is on.
+    private val compactPrefs by lazy { getSharedPreferences("compact_keyboard", MODE_PRIVATE) }
+
+    // Side keyboard (landscape): the keyboard window covers the whole screen, but only the
+    // button panel (this rectangle) takes taps; everywhere else, touches go to the app behind.
+    private var sideModeActive = false
+    private val sideTouchRect = Rect()
+
+    private fun setSideModeActive(active: Boolean) {
+        if (active != sideModeActive) {
+            sideModeActive = active
+            if (!active) sideTouchRect.setEmpty()
+            window?.window?.decorView?.requestLayout()
+        }
+    }
+
+    private fun setSideTouchArea(left: Float, top: Float, right: Float, bottom: Float) {
+        val newRect = Rect(left.toInt(), top.toInt(), (right + 0.5f).toInt(), (bottom + 0.5f).toInt())
+        if (newRect != sideTouchRect) {
+            sideTouchRect.set(newRect)
+            window?.window?.decorView?.requestLayout()
+        }
+    }
+
+    override fun onComputeInsets(outInsets: Insets) {
+        super.onComputeInsets(outInsets)
+        if (sideModeActive && !sideTouchRect.isEmpty) {
+            val windowHeight = window?.window?.decorView?.height ?: return
+            // Tell the app the keyboard takes no space at the bottom, so it keeps its full height.
+            outInsets.contentTopInsets = windowHeight
+            outInsets.visibleTopInsets = windowHeight
+            outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+            outInsets.touchableRegion.set(sideTouchRect)
+        }
+    }
+
+    // Never cover the whole screen with Android's big landscape text box ("extract" mode).
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
+    private companion object {
+        const val PREF_SWAP_SIDE = "swap_side"
+    }
+
     override fun onCreate() {
         super.onCreate()
         voiceInputLifecycleOwner.onCreate()
@@ -197,11 +253,21 @@ class VoiceInput : InputMethodService() {
             val isTablet = LocalConfiguration.current.smallestScreenWidthDp >= CompactKeyboardSize.twoRowMaxScreenWidthDp
             val maxStripWidth = if (isTablet) CompactKeyboardSize.tabletMaxStripWidth else CompactKeyboardSize.maxStripWidth
 
+            val showingMessage = !acceptedPrivacyPolicyAndLicense || showInsufficientPermissionsError
+
+            // Held sideways: the buttons go in a column along the left or right edge of the screen.
+            val sideMode = !isPortrait && !showingMessage
+            SideEffect { setSideModeActive(sideMode) }
+
+            // Which edge: a guess based on which way the device is turned, flipped by the switch-sides button.
+            var swapSide by remember { mutableStateOf(compactPrefs.getBoolean(PREF_SWAP_SIDE, false)) }
+            val rotation = LocalView.current.display?.rotation ?: AndroidSurface.ROTATION_0
+            val guessRightSide = rotation == AndroidSurface.ROTATION_0 || rotation == AndroidSurface.ROTATION_90
+            val keyboardOnRight = guessRightSide != swapSide
+
             // Messages (accept privacy policy / grant microphone) need more room than the button strip.
             val panelHeight = when {
-                !acceptedPrivacyPolicyAndLicense || showInsufficientPermissionsError ->
-                    CompactKeyboardSize.messagePanelHeight
-
+                showingMessage -> CompactKeyboardSize.messagePanelHeight
                 useTwoRows -> CompactKeyboardSize.twoRowStripHeight
                 isTablet && isPortrait -> CompactKeyboardSize.tabletStripHeightPortrait
                 isTablet -> CompactKeyboardSize.tabletStripHeightLandscape
@@ -209,22 +275,34 @@ class VoiceInput : InputMethodService() {
                 else -> CompactKeyboardSize.stripHeightLandscape
             }
 
+            // Keep clear of Android's status and navigation bars and its "hide / switch keyboard" buttons.
+            val keyboardInsets = if (sideMode) {
+                WindowInsets.systemBars
+                    .union(WindowInsets.displayCutout)
+                    .union(WindowInsets(bottom = CompactKeyboardSize.minBottomSpace))
+            } else {
+                WindowInsets.navigationBars.union(WindowInsets(bottom = CompactKeyboardSize.minBottomSpace))
+            }
+
             val buttonShape = RoundedCornerShape(10.dp)
 
             TranscribroTheme(preferencesViewModel = preferencesViewModel) {
+                // In side mode the keyboard covers the whole screen but is see-through except for
+                // the button panel, and only the panel takes taps (see onComputeInsets).
                 Surface(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = if (sideMode) Modifier.fillMaxSize() else Modifier.fillMaxWidth(),
+                    color = if (sideMode) Color.Transparent else MaterialTheme.colorScheme.surface
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            // Keep clear of Android's navigation area and its "hide / switch keyboard" buttons.
-                            .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets(bottom = CompactKeyboardSize.minBottomSpace)))
+                            .then(if (sideMode) Modifier.fillMaxHeight() else Modifier)
+                            .windowInsetsPadding(keyboardInsets)
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(panelHeight)
+                                .then(if (sideMode) Modifier.fillMaxHeight() else Modifier.height(panelHeight))
                                 .padding(horizontal = 8.dp, vertical = CompactKeyboardSize.verticalPadding)
                         ) {
                             if (!acceptedPrivacyPolicyAndLicense) {
@@ -487,33 +565,25 @@ class VoiceInput : InputMethodService() {
                                     // so the strip heights in CompactKeyboardSize are respected.
                                     LocalMinimumInteractiveComponentSize provides 0.dp
                                 ) {
-                                    // Settings, switch keyboard, cancel and mic (first row on phones held upright)
-                                    val firstRowButtons: @Composable RowScope.() -> Unit = {
-                                        val buttonModifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxHeight()
+                                    // Switch sides, switch keyboard, cancel and mic (first row on phones held upright)
+                                    val firstRowButtons: @Composable (weighted: (Float) -> Modifier) -> Unit = { weighted ->
+                                        val buttonModifier = weighted(1f)
 
-                                        // Settings
-                                        OutlinedIconButton(
-                                            onClick = {
-                                                speechRecognizer.value?.cancel()
-                                                isRecognizing = false
-
-                                                val intent = context.packageManager
-                                                    .getLaunchIntentForPackage(context.packageName)!!
-                                                    .apply {
-                                                        action = (Intent.ACTION_APPLICATION_PREFERENCES)
-                                                    }
-
-                                                startActivity(intent)
-                                            },
-                                            modifier = buttonModifier,
-                                            shape = buttonShape
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Settings,
-                                                contentDescription = "open Transcribro's settings"
-                                            )
+                                        // Move the side keyboard to the other edge (only shown when held sideways)
+                                        if (sideMode) {
+                                            OutlinedIconButton(
+                                                onClick = {
+                                                    swapSide = !swapSide
+                                                    compactPrefs.edit().putBoolean(PREF_SWAP_SIDE, swapSide).apply()
+                                                },
+                                                modifier = buttonModifier,
+                                                shape = buttonShape
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.SwapHoriz,
+                                                    contentDescription = "Move the keyboard to the other side"
+                                                )
+                                            }
                                         }
 
                                         // Switch back to the previous keyboard
@@ -564,9 +634,7 @@ class VoiceInput : InputMethodService() {
                                                     )
                                                 }
                                             },
-                                            modifier = Modifier
-                                                .weight(CompactKeyboardSize.micButtonWeight)
-                                                .fillMaxHeight(),
+                                            modifier = weighted(CompactKeyboardSize.micButtonWeight),
                                             shape = buttonShape
                                         ) {
                                             Icon(
@@ -582,10 +650,8 @@ class VoiceInput : InputMethodService() {
                                     }
 
                                     // Editing buttons (second row on phones held upright)
-                                    val secondRowButtons: @Composable RowScope.() -> Unit = {
-                                        val buttonModifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxHeight()
+                                    val secondRowButtons: @Composable (weighted: (Float) -> Modifier) -> Unit = { weighted ->
+                                        val buttonModifier = weighted(1f)
 
                                         // Clear all text that isn't selected
                                         FilledTonalIconButton(
@@ -743,7 +809,57 @@ class VoiceInput : InputMethodService() {
                                         }
                                     }
 
-                                    if (useTwoRows) {
+                                    if (sideMode) {
+                                        // Held sideways: a column of buttons along the left or right edge.
+                                        // Tablets get one column; phones (shorter screens) get two.
+                                        Surface(
+                                            modifier = Modifier
+                                                .align(if (keyboardOnRight) Alignment.CenterEnd else Alignment.CenterStart)
+                                                .heightIn(max = CompactKeyboardSize.sideMaxHeight)
+                                                .fillMaxHeight()
+                                                .onGloballyPositioned { coordinates ->
+                                                    val bounds = coordinates.boundsInWindow()
+                                                    setSideTouchArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                                                },
+                                            shape = RoundedCornerShape(14.dp),
+                                            tonalElevation = 2.dp,
+                                            shadowElevation = 4.dp
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(CompactKeyboardSize.sidePanelPadding),
+                                                horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
+                                            ) {
+                                                if (isTablet) {
+                                                    Column(
+                                                        modifier = Modifier
+                                                            .width(CompactKeyboardSize.sideColumnWidth)
+                                                            .fillMaxHeight(),
+                                                        verticalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
+                                                    ) {
+                                                        firstRowButtons { w -> Modifier.weight(w).fillMaxWidth() }
+                                                        secondRowButtons { w -> Modifier.weight(w).fillMaxWidth() }
+                                                    }
+                                                } else {
+                                                    Column(
+                                                        modifier = Modifier
+                                                            .width(CompactKeyboardSize.sideColumnWidth)
+                                                            .fillMaxHeight(),
+                                                        verticalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
+                                                    ) {
+                                                        firstRowButtons { w -> Modifier.weight(w).fillMaxWidth() }
+                                                    }
+                                                    Column(
+                                                        modifier = Modifier
+                                                            .width(CompactKeyboardSize.sideColumnWidth)
+                                                            .fillMaxHeight(),
+                                                        verticalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
+                                                    ) {
+                                                        secondRowButtons { w -> Modifier.weight(w).fillMaxWidth() }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if (useTwoRows) {
                                         // Phone held upright: two rows of bigger buttons.
                                         Column(
                                             modifier = Modifier
@@ -757,20 +873,22 @@ class VoiceInput : InputMethodService() {
                                                     .fillMaxWidth()
                                                     .weight(1f),
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing),
-                                                content = firstRowButtons
-                                            )
+                                                horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
+                                            ) {
+                                                firstRowButtons { w -> Modifier.weight(w).fillMaxHeight() }
+                                            }
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .weight(1f),
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing),
-                                                content = secondRowButtons
-                                            )
+                                                horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
+                                            ) {
+                                                secondRowButtons { w -> Modifier.weight(w).fillMaxHeight() }
+                                            }
                                         }
                                     } else {
-                                        // Tablet, or phone held sideways: one thin row.
+                                        // Tablet held upright: one thin row.
                                         Row(
                                             modifier = Modifier
                                                 .align(Alignment.Center)
@@ -780,8 +898,8 @@ class VoiceInput : InputMethodService() {
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(CompactKeyboardSize.buttonSpacing)
                                         ) {
-                                            firstRowButtons()
-                                            secondRowButtons()
+                                            firstRowButtons { w -> Modifier.weight(w).fillMaxHeight() }
+                                            secondRowButtons { w -> Modifier.weight(w).fillMaxHeight() }
                                         }
                                     }
                                 }
@@ -926,6 +1044,15 @@ private object CompactKeyboardSize {
      * "hide keyboard" and "switch keyboard" buttons that it draws at the bottom of the screen.
      */
     val minBottomSpace: Dp = 48.dp
+
+    /** Width of each button column on the side keyboard (landscape). */
+    val sideColumnWidth: Dp = 56.dp
+
+    /** The side keyboard never gets taller than this, so it stays clear of the screen's corners. */
+    val sideMaxHeight: Dp = 640.dp
+
+    /** Space between the edge of the side keyboard's panel and its buttons. */
+    val sidePanelPadding: Dp = 4.dp
 
     /** Height used only when the keyboard has to show a message (accept policy / grant microphone). */
     val messagePanelHeight: Dp = 200.dp
