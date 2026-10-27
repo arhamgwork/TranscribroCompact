@@ -37,7 +37,8 @@ class WhisperRepository(
         }
 
         val transcript = whisperContext.value?.transcribeData(buffer, ((data.size / 16000f) * 1000f).toLong()) ?: ""
-        return transcript.removeSuffix(" .") // remove hallucination
+        // remove hallucination, then fix the spelling of Islamic / Urdu phrases
+        return PhraseFixes.apply(transcript.removeSuffix(" ."))
     }
 
     suspend fun release() {
